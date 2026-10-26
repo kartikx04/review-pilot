@@ -182,7 +182,7 @@ func (e *Engine) initRules() {
 			Category:       models.CategorySecurity,
 			Language:       "py",
 			FileExtensions: []string{".py"},
-			Pattern:        regexp.MustCompile(`(?i)(pickle\.loads|yaml\.load\([^,)]+\))`),
+			Pattern:        regexp.MustCompile(`(?i)(pickle\.loads\s*\(|yaml\.load\s*\()`),
 			Explanation:    "Loading untrusted data using `pickle.loads` or `yaml.load` allows arbitrary code execution because pickle allows arbitrary object construction upon unpickling.",
 			Recommendation: "Use `json.loads` for safe data serialization or `yaml.safe_load()` for YAML files.",
 			ProposedFix:    "data = yaml.safe_load(user_content) # Use SafeLoader",
@@ -281,7 +281,118 @@ func (e *Engine) AnalyzePatch(filename string, patch string) []models.Finding {
 		}
 	}
 
+	findings = append(findings, detectNonProgressingBinarySearch(filename, patch)...)
+	findings = append(findings, detectUnconditionalDijkstraRelaxation(filename, patch)...)
+
 	return findings
+}
+
+// detectUnconditionalDijkstraRelaxation catches the correctness error of
+// overwriting a shortest-known distance without first comparing the candidate.
+func detectUnconditionalDijkstraRelaxation(filename, patch string) []models.Finding {
+	if !matchesExtension(filename, []string{".py"}) || !strings.Contains(patch, "heapq.heappop") || !strings.Contains(patch, "new_distance") {
+		return nil
+	}
+
+	guardRegex := regexp.MustCompile(`(?m)^\+?\s*if\s+new_distance\s*<\s*distances\s*\[`)
+	if guardRegex.MatchString(patch) {
+		return nil
+	}
+	assignmentRegex := regexp.MustCompile(`^\s*distances\s*\[\s*\w+\s*\]\s*=\s*new_distance\b`)
+	lines := strings.Split(patch, "\n")
+	hunkHeaderRegex := regexp.MustCompile(`^@@\s+-\d+(?:,\d+)?\s+\+(\d+)(?:,\d+)?\s+@@`)
+	currentLine := 0
+	for _, line := range lines {
+		if strings.HasPrefix(line, "@@") {
+			if matches := hunkHeaderRegex.FindStringSubmatch(line); len(matches) > 1 {
+				if n, err := strconv.Atoi(matches[1]); err == nil {
+					currentLine = n - 1
+				}
+			}
+			continue
+		}
+		if strings.HasPrefix(line, "-") {
+			continue
+		}
+		currentLine++
+		content := strings.TrimPrefix(line, "+")
+		if strings.HasPrefix(line, "+") && assignmentRegex.MatchString(content) {
+			return []models.Finding{{
+				ID:             fmt.Sprintf("BUG-005-%s-%d", sanitizeFilename(filename), currentLine),
+				Title:          "Dijkstra Relaxation Overwrites a Shorter Path",
+				Severity:       models.SeverityCritical,
+				Category:       models.CategoryBug,
+				File:           filename,
+				Line:           currentLine,
+				RuleID:         "BUG-005",
+				Source:         "static_analysis",
+				Explanation:    "Dijkstra's algorithm must only update a neighbor when the candidate distance is smaller. Unconditionally replacing it can discard a shorter path and keep enqueuing worse paths.",
+				Recommendation: "Guard the update and heap push with a comparison against the currently known distance.",
+				CodeSnippet:    strings.TrimSpace(content),
+				ProposedFix:    "if new_distance < distances[neighbor]:\n    distances[neighbor] = new_distance\n    heapq.heappush(queue, (new_distance, neighbor))",
+				Confidence:     "High",
+			}}
+		}
+	}
+	return nil
+}
+
+// detectNonProgressingBinarySearch catches a high-confidence correctness bug where
+// a binary-search lower bound is assigned its current midpoint. With a strict
+// lower/upper loop condition this can leave the interval unchanged indefinitely.
+func detectNonProgressingBinarySearch(filename, patch string) []models.Finding {
+	if !matchesExtension(filename, []string{".py", ".go", ".js", ".ts", ".jsx", ".tsx"}) {
+		return nil
+	}
+
+	lines := strings.Split(patch, "\n")
+	hunkHeaderRegex := regexp.MustCompile(`^@@\s+-\d+(?:,\d+)?\s+\+(\d+)(?:,\d+)?\s+@@`)
+	loopRegex := regexp.MustCompile(`\bwhile\s+(left|low|start)\s*<\s*(right|high|end)\b`)
+	midRegex := regexp.MustCompile(`\b(mid|middle)\s*=`)
+	assignmentRegex := regexp.MustCompile(`^\s*(left|low|start)\s*=\s*(mid|middle)\s*(?:(?:#|//).*)?$`)
+
+	currentLine := 0
+	seenLoop := false
+	seenMidpoint := false
+	for _, line := range lines {
+		if strings.HasPrefix(line, "@@") {
+			if matches := hunkHeaderRegex.FindStringSubmatch(line); len(matches) > 1 {
+				if n, err := strconv.Atoi(matches[1]); err == nil {
+					currentLine = n - 1
+				}
+			}
+			continue
+		}
+		if strings.HasPrefix(line, "-") {
+			continue
+		}
+		currentLine++
+		content := strings.TrimPrefix(line, "+")
+		if loopRegex.MatchString(content) {
+			seenLoop = true
+		}
+		if midRegex.MatchString(content) {
+			seenMidpoint = true
+		}
+		if strings.HasPrefix(line, "+") && seenLoop && seenMidpoint && assignmentRegex.MatchString(content) {
+			return []models.Finding{{
+				ID:             fmt.Sprintf("BUG-004-%s-%d", sanitizeFilename(filename), currentLine),
+				Title:          "Binary Search Lower Bound Does Not Progress",
+				Severity:       models.SeverityCritical,
+				Category:       models.CategoryBug,
+				File:           filename,
+				Line:           currentLine,
+				RuleID:         "BUG-004",
+				Source:         "static_analysis",
+				Explanation:    "Assigning the lower bound to the current midpoint can leave the search interval unchanged when the target is greater than arr[mid]. The loop may never terminate and can also skip valid boundary cases.",
+				Recommendation: "Advance the lower bound past the midpoint after ruling it out, and test absent targets and adjacent bounds.",
+				CodeSnippet:    strings.TrimSpace(content),
+				ProposedFix:    "left = mid + 1",
+				Confidence:     "High",
+			}}
+		}
+	}
+	return nil
 }
 
 func matchesExtension(filename string, exts []string) bool {

@@ -77,14 +77,16 @@ func (h *APIHandler) HandleReview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Environment variable fallback for keys
-	apiKey := req.APIKey
-	if apiKey == "" {
-		if strings.ToLower(req.AIProvider) == "groq" {
-			apiKey = os.Getenv("GROQ_API_KEY")
-		} else {
-			apiKey = os.Getenv("GEMINI_API_KEY")
-		}
+	// Provider credentials live only in the server process; never accept them from React.
+	provider := strings.ToLower(req.AIProvider)
+	apiKey := os.Getenv("GEMINI_API_KEY")
+	model := os.Getenv("GEMINI_MODEL")
+	if provider == "groq" {
+		apiKey = os.Getenv("GROQ_API_KEY")
+		model = os.Getenv("GROQ_MODEL")
+	}
+	if req.Model != "" {
+		model = req.Model
 	}
 
 	ghToken := req.GitHubToken
@@ -174,7 +176,7 @@ func (h *APIHandler) HandleReview(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Run static analysis & AI review
-	reviewResult, err := h.aggregator.ReviewPullRequest(r.Context(), pr, files, req.AIProvider, apiKey, req.Model)
+	reviewResult, err := h.aggregator.ReviewPullRequest(r.Context(), pr, files, req.AIProvider, apiKey, model)
 	if err != nil {
 		writeJSONError(w, http.StatusInternalServerError, "Failed to analyze pull request: "+err.Error())
 		return

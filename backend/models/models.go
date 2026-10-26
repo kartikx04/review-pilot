@@ -28,7 +28,6 @@ type PRReviewRequest struct {
 	PRURL       string `json:"pr_url"`
 	GitHubToken string `json:"github_token,omitempty"`
 	AIProvider  string `json:"ai_provider,omitempty"` // "gemini", "groq", or "local"
-	APIKey      string `json:"api_key,omitempty"`
 	Model       string `json:"model,omitempty"`
 	SampleID    string `json:"sample_id,omitempty"`
 	CustomDiff  string `json:"custom_diff,omitempty"`
@@ -69,18 +68,18 @@ type FileChange struct {
 type Finding struct {
 	ID             string `json:"id"`
 	Title          string `json:"title"`
-	Severity       string `json:"severity"`        // Critical, Warning, Suggestion
-	Category       string `json:"category"`        // Security, Bug, Code Quality, Test Coverage
+	Severity       string `json:"severity"` // Critical, Warning, Suggestion
+	Category       string `json:"category"` // Security, Bug, Code Quality, Test Coverage
 	File           string `json:"file"`
 	Line           int    `json:"line"`
 	EndLine        int    `json:"end_line,omitempty"`
 	RuleID         string `json:"rule_id,omitempty"`
-	Source         string `json:"source"`          // "static_analysis" or "ai_review"
+	Source         string `json:"source"` // "static_analysis" or "ai_review"
 	Explanation    string `json:"explanation"`
 	Recommendation string `json:"recommendation"`
 	CodeSnippet    string `json:"code_snippet,omitempty"`
 	ProposedFix    string `json:"proposed_fix,omitempty"`
-	Confidence     string `json:"confidence"`      // High, Medium, Low
+	Confidence     string `json:"confidence"` // High, Medium, Low
 }
 
 // ReviewSummary gives high-level overview metrics
@@ -100,6 +99,8 @@ type ReviewSummary struct {
 	DurationMs          int64    `json:"duration_ms"`
 	StaticAnalysisFound int      `json:"static_analysis_found"`
 	AIFound             int      `json:"ai_found"`
+	AIReviewStatus      string   `json:"ai_review_status"` // completed, local, or failed
+	AIProvider          string   `json:"ai_provider"`      // gemini, groq, or local
 }
 
 // ReviewResponse is the full result returned to client

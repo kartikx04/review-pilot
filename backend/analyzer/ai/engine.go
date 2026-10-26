@@ -22,6 +22,7 @@ type AIResponseFormat struct {
 
 type Engine struct {
 	httpClient *http.Client
+	geminiURL  string
 }
 
 func NewEngine() *Engine {
@@ -29,60 +30,44 @@ func NewEngine() *Engine {
 		httpClient: &http.Client{
 			Timeout: 35 * time.Second,
 		},
+		geminiURL: "https://generativelanguage.googleapis.com/v1beta/interactions",
 	}
 }
 
-// ReviewCode performs AI review via Gemini, Groq, or our intelligent local analyzer
+// ReviewCode performs AI review via Gemini, Groq, or the explicit local analyzer.
 func (e *Engine) ReviewCode(ctx context.Context, pr models.PullRequest, files []models.FileChange, provider, apiKey, model string) (*AIResponseFormat, error) {
-	// If provider or API key is not specified, run our built-in heuristic AI reviewer
-	if apiKey == "" || provider == "local" || provider == "offline" {
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	if provider == "" || provider == "local" || provider == "offline" {
 		return e.runLocalHeuristicReview(pr, files), nil
 	}
+	if apiKey == "" {
+		return nil, fmt.Errorf("%s review is configured but its server-side API key is missing", provider)
+	}
 
-	provider = strings.ToLower(provider)
 	if provider == "groq" {
-		res, err := e.callGroq(ctx, pr, files, apiKey, model)
-		if err == nil {
-			return res, nil
-		}
-		// If Groq API fails, fallback to local heuristic with warning note
-		localRes := e.runLocalHeuristicReview(pr, files)
-		localRes.Summary = fmt.Sprintf("[Groq API Note: %s - Used local analysis engine] %s", err.Error(), localRes.Summary)
-		return localRes, nil
+		return e.callGroq(ctx, pr, files, apiKey, model)
 	}
 
-	// Default to Google Gemini
-	res, err := e.callGemini(ctx, pr, files, apiKey, model)
-	if err == nil {
-		return res, nil
+	if provider != "gemini" {
+		return nil, fmt.Errorf("unsupported AI provider %q", provider)
 	}
-
-	// Fallback to local heuristic
-	localRes := e.runLocalHeuristicReview(pr, files)
-	localRes.Summary = fmt.Sprintf("[Gemini API Note: %s - Used local analysis engine] %s", err.Error(), localRes.Summary)
-	return localRes, nil
+	return e.callGemini(ctx, pr, files, apiKey, model)
 }
 
 func (e *Engine) callGemini(ctx context.Context, pr models.PullRequest, files []models.FileChange, apiKey, model string) (*AIResponseFormat, error) {
 	if model == "" {
-		model = "gemini-2.0-flash"
+		model = "gemini-3.5-flash-lite"
 	}
 
-	url := fmt.Sprintf("https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent?key=%s", model, apiKey)
+	url := e.geminiURL
 	prompt := buildPrompt(pr, files)
 
 	payload := map[string]interface{}{
-		"contents": []map[string]interface{}{
-			{
-				"role": "user",
-				"parts": []map[string]interface{}{
-					{"text": prompt},
-				},
-			},
-		},
-		"generationConfig": map[string]interface{}{
-			"temperature":       0.2,
-			"response_mime_type": "application/json",
+		"model": model,
+		"input": prompt,
+		"response_format": map[string]interface{}{
+			"type": "text", "mime_type": "application/json",
+			"schema": reviewResponseSchema(),
 		},
 	}
 
@@ -96,6 +81,7 @@ func (e *Engine) callGemini(ctx context.Context, pr models.PullRequest, files []
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-goog-api-key", apiKey)
 
 	resp, err := e.httpClient.Do(req)
 	if err != nil {
@@ -109,29 +95,55 @@ func (e *Engine) callGemini(ctx context.Context, pr models.PullRequest, files []
 	}
 
 	var geminiResp struct {
-		Candidates []struct {
-			Content struct {
-				Parts []struct {
-					Text string `json:"text"`
-				} `json:"parts"`
+		OutputText  string `json:"output_text"`
+		Interaction struct {
+			OutputText string `json:"output_text"`
+		} `json:"interaction"`
+		Status string `json:"status"`
+		Steps  []struct {
+			Type    string `json:"type"`
+			Content []struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
 			} `json:"content"`
-		} `json:"candidates"`
+		} `json:"steps"`
 	}
 
 	if err := json.Unmarshal(respBytes, &geminiResp); err != nil {
 		return nil, fmt.Errorf("failed to parse gemini response wrapper: %w", err)
 	}
 
-	if len(geminiResp.Candidates) == 0 || len(geminiResp.Candidates[0].Content.Parts) == 0 {
+	rawJSON := geminiResp.OutputText
+	if rawJSON == "" {
+		rawJSON = geminiResp.Interaction.OutputText
+	}
+	if rawJSON == "" {
+		for _, step := range geminiResp.Steps {
+			if step.Type != "model_output" {
+				continue
+			}
+			for _, content := range step.Content {
+				if content.Type == "text" && content.Text != "" {
+					rawJSON += content.Text
+				}
+			}
+		}
+	}
+	if rawJSON == "" {
+		if geminiResp.Status != "" && geminiResp.Status != "completed" {
+			return nil, fmt.Errorf("Gemini interaction ended with status %q", geminiResp.Status)
+		}
 		return nil, fmt.Errorf("empty response received from Gemini")
 	}
 
-	rawJSON := geminiResp.Candidates[0].Content.Parts[0].Text
 	rawJSON = cleanJSONMarkdown(rawJSON)
 
 	var aiOutput AIResponseFormat
 	if err := json.Unmarshal([]byte(rawJSON), &aiOutput); err != nil {
 		return nil, fmt.Errorf("failed to decode JSON from Gemini output: %w", err)
+	}
+	if err := validateAIResponse(aiOutput); err != nil {
+		return nil, fmt.Errorf("Gemini returned an invalid review: %w", err)
 	}
 
 	for i := range aiOutput.Findings {
@@ -142,6 +154,30 @@ func (e *Engine) callGemini(ctx context.Context, pr models.PullRequest, files []
 	}
 
 	return &aiOutput, nil
+}
+
+func reviewResponseSchema() map[string]interface{} {
+	stringArray := map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}}
+	finding := map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"title": map[string]string{"type": "string"}, "severity": map[string]string{"type": "string"},
+			"category": map[string]string{"type": "string"}, "file": map[string]string{"type": "string"},
+			"line": map[string]string{"type": "integer"}, "explanation": map[string]string{"type": "string"},
+			"recommendation": map[string]string{"type": "string"}, "code_snippet": map[string]string{"type": "string"},
+			"proposed_fix": map[string]string{"type": "string"}, "confidence": map[string]string{"type": "string"},
+		},
+		"required": []string{"title", "severity", "category", "file", "line", "explanation", "recommendation", "confidence"},
+	}
+	return map[string]interface{}{
+		"type": "object",
+		"properties": map[string]interface{}{
+			"summary": map[string]string{"type": "string"}, "verdict": map[string]string{"type": "string"},
+			"positive_aspects": stringArray, "missing_tests": stringArray,
+			"findings": map[string]interface{}{"type": "array", "items": finding},
+		},
+		"required": []string{"summary", "verdict", "positive_aspects", "missing_tests", "findings"},
+	}
 }
 
 func (e *Engine) callGroq(ctx context.Context, pr models.PullRequest, files []models.FileChange, apiKey, model string) (*AIResponseFormat, error) {
@@ -207,6 +243,9 @@ func (e *Engine) callGroq(ctx context.Context, pr models.PullRequest, files []mo
 	if err := json.Unmarshal([]byte(rawJSON), &aiOutput); err != nil {
 		return nil, fmt.Errorf("failed to decode JSON from Groq: %w", err)
 	}
+	if err := validateAIResponse(aiOutput); err != nil {
+		return nil, fmt.Errorf("Groq returned an invalid review: %w", err)
+	}
 
 	for i := range aiOutput.Findings {
 		aiOutput.Findings[i].Source = "ai_review"
@@ -216,6 +255,18 @@ func (e *Engine) callGroq(ctx context.Context, pr models.PullRequest, files []mo
 	}
 
 	return &aiOutput, nil
+}
+
+func validateAIResponse(output AIResponseFormat) error {
+	for i, finding := range output.Findings {
+		if finding.Severity != models.SeverityCritical && finding.Severity != models.SeverityWarning && finding.Severity != models.SeveritySuggestion {
+			return fmt.Errorf("finding %d has an invalid severity", i+1)
+		}
+		if finding.File == "" || finding.Line <= 0 || finding.Explanation == "" || finding.Recommendation == "" {
+			return fmt.Errorf("finding %d is missing file, line, explanation, or recommendation", i+1)
+		}
+	}
+	return nil
 }
 
 func buildPrompt(pr models.PullRequest, files []models.FileChange) string {
@@ -246,6 +297,7 @@ Review instructions:
    - Real bugs (nil pointers, race conditions, memory leaks, unhandled exceptions)
    - Code quality & architectural anti-patterns (unbounded queries, dead code, poor naming)
    - Missing unit or integration test cases for new business logic
+   - Algorithm correctness: loop variables must make progress, termination must be guaranteed, binary-search midpoint/boundary updates must exclude the midpoint, and off-by-one / empty-input cases must be safe.
 2. Give clear, respectful, actionable feedback with code snippets and concrete proposed fixes.
 3. Classify each finding with:
    - "severity": "Critical", "Warning", or "Suggestion"

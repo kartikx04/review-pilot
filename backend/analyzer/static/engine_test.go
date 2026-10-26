@@ -109,3 +109,110 @@ func TestEngineDetectsEvalDangerousExecution(t *testing.T) {
 		t.Errorf("Expected SEC-010 eval rule match")
 	}
 }
+
+func TestEngineDetectsUnsafeYAMLLoaderWithExplicitLoader(t *testing.T) {
+	patch := `@@ -1,0 +1,4 @@
++import yaml
++
++def load_config(config_text):
++    return yaml.load(config_text, Loader=yaml.Loader)`
+
+	findings := NewEngine().AnalyzePatch("config_loader.py", patch)
+	for _, finding := range findings {
+		if finding.RuleID == "SEC-009" && finding.Severity == models.SeverityCritical {
+			return
+		}
+	}
+	t.Fatal("expected SEC-009 for yaml.load with yaml.Loader")
+}
+
+func TestEngineDetectsNonProgressingBinarySearch(t *testing.T) {
+	patch := `@@ -1,0 +1,14 @@
++def binary_search(arr, target):
++    left = 0
++    right = len(arr) - 1
++    while left < right:
++        mid = (left + right) // 2
++        if arr[mid] == target:
++            return mid
++        elif arr[mid] < target:
++            left = mid  # Bug: should be mid + 1
++        else:
++            right = mid - 1
++    return -1`
+
+	findings := NewEngine().AnalyzePatch("search.py", patch)
+	for _, finding := range findings {
+		if finding.RuleID == "BUG-004" && finding.Severity == models.SeverityCritical {
+			return
+		}
+	}
+	t.Fatal("expected BUG-004 for a non-progressing binary-search lower bound")
+}
+
+func TestEngineDoesNotFlagCorrectBinarySearchProgress(t *testing.T) {
+	patch := `@@ -1,0 +1,14 @@
++def binary_search(arr, target):
++    left = 0
++    right = len(arr) - 1
++    while left < right:
++        mid = (left + right) // 2
++        if arr[mid] == target:
++            return mid
++        elif arr[mid] < target:
++            left = mid + 1
++        else:
++            right = mid - 1
++    return -1`
+
+	findings := NewEngine().AnalyzePatch("search.py", patch)
+	for _, finding := range findings {
+		if finding.RuleID == "BUG-004" {
+			t.Fatal("did not expect BUG-004 for a progressing lower bound")
+		}
+	}
+}
+
+func TestEngineDetectsUnconditionalDijkstraRelaxation(t *testing.T) {
+	patch := `@@ -1,0 +1,12 @@
++import heapq
++def dijkstra(graph, start):
++    distances = {node: float("inf") for node in graph}
++    queue = [(0, start)]
++    while queue:
++        current_distance, node = heapq.heappop(queue)
++        for neighbor, weight in graph[node]:
++            new_distance = current_distance + weight
++            distances[neighbor] = new_distance
++            heapq.heappush(queue, (new_distance, neighbor))`
+
+	findings := NewEngine().AnalyzePatch("dijkstra.py", patch)
+	for _, finding := range findings {
+		if finding.RuleID == "BUG-005" && finding.Severity == models.SeverityCritical {
+			return
+		}
+	}
+	t.Fatal("expected BUG-005 for an unconditional Dijkstra relaxation")
+}
+
+func TestEngineDoesNotFlagGuardedDijkstraRelaxation(t *testing.T) {
+	patch := `@@ -1,0 +1,13 @@
++import heapq
++def dijkstra(graph, start):
++    distances = {node: float("inf") for node in graph}
++    queue = [(0, start)]
++    while queue:
++        current_distance, node = heapq.heappop(queue)
++        for neighbor, weight in graph[node]:
++            new_distance = current_distance + weight
++            if new_distance < distances[neighbor]:
++                distances[neighbor] = new_distance
++                heapq.heappush(queue, (new_distance, neighbor))`
+
+	findings := NewEngine().AnalyzePatch("dijkstra.py", patch)
+	for _, finding := range findings {
+		if finding.RuleID == "BUG-005" {
+			t.Fatal("did not expect BUG-005 for a guarded Dijkstra relaxation")
+		}
+	}
+}

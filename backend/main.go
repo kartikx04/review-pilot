@@ -11,6 +11,9 @@ import (
 )
 
 func main() {
+	loadEnvironmentFile(".env")
+	loadEnvironmentFile("../.env")
+
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
@@ -75,5 +78,29 @@ func main() {
 
 	if err := http.ListenAndServe(serverAddr, mux); err != nil {
 		log.Fatalf("Server stopped with error: %v", err)
+	}
+}
+
+// loadEnvironmentFile supports local development without adding a dotenv
+// dependency. Existing process environment values always take precedence and
+// values are never logged.
+func loadEnvironmentFile(path string) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		key, value, found := strings.Cut(line, "=")
+		key = strings.TrimSpace(key)
+		if !found || key == "" || os.Getenv(key) != "" {
+			continue
+		}
+		value = strings.Trim(strings.TrimSpace(value), `"'`)
+		_ = os.Setenv(key, value)
 	}
 }

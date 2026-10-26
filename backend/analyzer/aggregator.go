@@ -37,13 +37,22 @@ func (a *Aggregator) ReviewPullRequest(ctx context.Context, pr models.PullReques
 	}
 
 	// 2. Run AI Review
-	aiResult, err := a.aiEngine.ReviewCode(ctx, pr, files, provider, apiKey, model)
+	aiProvider := strings.ToLower(strings.TrimSpace(provider))
+	if aiProvider == "" || aiProvider == "offline" {
+		aiProvider = "local"
+	}
+	aiResult, err := a.aiEngine.ReviewCode(ctx, pr, files, aiProvider, apiKey, model)
+	aiReviewStatus := "completed"
+	if aiProvider == "local" {
+		aiReviewStatus = "local"
+	}
 	if err != nil {
-		// Log and continue with static findings if AI engine returns error
+		// An unavailable external reviewer must never be reported as a successful AI review.
 		aiResult = &ai.AIResponseFormat{
-			Summary: "AI review failed to complete; displaying static analysis results.",
+			Summary: "AI review failed to complete: " + err.Error() + ". Displaying static analysis results only.",
 			Verdict: models.VerdictNeedsReview,
 		}
+		aiReviewStatus = "failed"
 	}
 
 	// 3. Deduplicate and merge findings
@@ -79,7 +88,10 @@ func (a *Aggregator) ReviewPullRequest(ctx context.Context, pr models.PullReques
 	var verdict string
 	var verdictMessage string
 
-	if criticalCount > 0 {
+	if aiReviewStatus == "failed" {
+		verdict = models.VerdictNeedsReview
+		verdictMessage = "AI review did not complete. Configure a valid server-side key or use the local engine; do not treat this as approval."
+	} else if criticalCount > 0 {
 		verdict = models.VerdictChangesRequested
 		verdictMessage = "Critical security or functional bugs detected. Merge should be blocked until resolved."
 	} else if warningCount >= 2 {
@@ -111,6 +123,8 @@ func (a *Aggregator) ReviewPullRequest(ctx context.Context, pr models.PullReques
 		DurationMs:          duration,
 		StaticAnalysisFound: len(staticFindings),
 		AIFound:             len(aiResult.Findings),
+		AIReviewStatus:      aiReviewStatus,
+		AIProvider:          aiProvider,
 	}
 
 	return &models.ReviewResponse{
@@ -128,7 +142,10 @@ func mergeFindings(staticFindings, aiFindings []models.Finding) []models.Finding
 
 	for _, aiF := range aiFindings {
 		duplicate := false
-		for i, sF := range merged {
+		// Deduplicate AI findings only against original static results. Comparing
+		// against findings appended by earlier AI iterations hides distinct nearby
+		// LLM findings and incorrectly labels them as static-and-AI matches.
+		for i, sF := range staticFindings {
 			// If same file and within 2 lines of each other, merge details
 			if strings.EqualFold(aiF.File, sF.File) && math.Abs(float64(aiF.Line-sF.Line)) <= 2 {
 				duplicate = true
