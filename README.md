@@ -27,7 +27,7 @@ Built with **Golang**, **React**, **TypeScript**, **Vite**, and **Tailwind CSS**
      - **Missing Test Suites**: Flags critical new business logic introduced without accompanying tests.
 
 3. **AI-Powered Code Review Engine**
-   - Supports **Google Gemini** (`gemini-2.0-flash` / `gemini-1.5-flash`) and **Groq** (`llama-3.3-70b-versatile`).
+   - Supports **Google Gemini** (default: `gemini-3.5-flash-lite`) and **Groq** (`llama-3.3-70b-versatile`).
    - Returns structured JSON findings containing plain-English explanations, severity ratings, and actionable code replacements.
    - **Intelligent Local Engine Fallback**: Includes a built-in heuristic review engine that operates completely offline—guaranteeing 100% reliability during live college presentations without requiring API keys or incurring rate limits!
 
@@ -89,7 +89,7 @@ pr-review-ai/
 │           ├── FindingCard.tsx     # Expandable card with explanation, diff & fix copy
 │           ├── FileDiffViewer.tsx  # Unified git diff viewer with inline annotations
 │           ├── PositiveAspectsCard.tsx # Good practices & test coverage suggestions
-│           ├── SettingsModal.tsx   # Gemini / Groq API key & GitHub token settings
+│           ├── SettingsModal.tsx   # Provider selection & GitHub token settings
 │           └── ExportModal.tsx     # Markdown & JSON review exporter
 ├── samples/
 │   ├── README.md                   # Detailed vulnerability walkthrough
@@ -153,6 +153,18 @@ Run backend static analysis and GitHub URL parser unit tests:
 cd backend
 go test -v ./...
 ```
+
+## 🔑 External AI configuration
+
+PRLens keeps AI credentials in the backend process; they are never stored in the browser or sent by the React app. Create a Gemini key in Google AI Studio, then start the backend with:
+
+```bash
+export GEMINI_API_KEY="your-key"
+export GEMINI_MODEL="gemini-3.5-flash-lite" # optional; this is the default
+go run main.go
+```
+
+Select **Google Gemini** in Settings to use that configured backend provider. The Gemini Developer API free tier has limited model access and quota, so PRLens marks the AI review as failed (rather than approved) if the key, model, network, or quota is unavailable; static findings still remain visible. For Groq, use `GROQ_API_KEY` and optional `GROQ_MODEL`. The Local Engine remains available for offline demonstrations.
 
 Sample output:
 ```
@@ -221,7 +233,7 @@ When presenting this project to evaluators or professors, follow this structured
 
 ## 🔒 Security Best Practices Implemented
 - Sanitized HTML preview via text nodes and Markdown code fences.
-- Zero credential logging; API keys stored client-side in browser `localStorage`.
+- Zero credential logging; AI API keys are read only from backend environment variables and ignored by Git via `.env` rules.
 - Comprehensive CORS security headers configured on Go HTTP handlers.
 - Pure Go standard library networking with strict request timeouts.
 

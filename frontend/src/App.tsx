@@ -85,9 +85,7 @@ export function App() {
       const response = await submitReview({
         ...payload,
         ai_provider: settings.aiProvider,
-        api_key: settings.apiKey,
         github_token: settings.githubToken,
-        model: settings.model,
       });
 
       setReviewData(response);

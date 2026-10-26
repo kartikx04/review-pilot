@@ -124,6 +124,9 @@ export const OverviewMetrics: React.FC<OverviewMetricsProps> = ({ data }) => {
               <p className="text-xs opacity-90 mt-0.5">
                 {summary.verdict_message}
               </p>
+              {summary.ai_review_status === 'failed' && (
+                <p className="text-xs opacity-90 mt-1">External AI: unavailable — static findings only.</p>
+              )}
             </div>
           </div>
 
@@ -231,7 +234,7 @@ export const OverviewMetrics: React.FC<OverviewMetricsProps> = ({ data }) => {
             <div className="flex justify-between text-xs">
               <span className="text-slate-400">Static / AI:</span>
               <span className="font-mono text-indigo-300">
-                {summary.static_analysis_found} / {summary.ai_found}
+                {summary.static_analysis_found} / {summary.ai_found} ({summary.ai_provider} · {summary.ai_review_status})
               </span>
             </div>
           </div>

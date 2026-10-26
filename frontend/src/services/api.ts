@@ -39,9 +39,7 @@ export async function checkBackendHealth(): Promise<boolean> {
 // LocalStorage helpers for user settings
 export interface UserSettings {
   aiProvider: 'gemini' | 'groq' | 'local';
-  apiKey: string;
   githubToken: string;
-  model: string;
 }
 
 const SETTINGS_KEY = 'prlens_settings';
@@ -57,9 +55,7 @@ export function loadSettings(): UserSettings {
   }
   return {
     aiProvider: 'local',
-    apiKey: '',
     githubToken: '',
-    model: 'gemini-2.0-flash',
   };
 }
 

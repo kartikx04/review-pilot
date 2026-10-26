@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, Key, Github, Cpu, Eye, EyeOff, Check, ShieldAlert } from 'lucide-react';
+import { X, Github, Cpu, Eye, EyeOff, Check, ShieldAlert } from 'lucide-react';
 import { UserSettings } from '../services/api';
 
 interface SettingsModalProps {
@@ -16,10 +16,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onSave,
 }) => {
   const [provider, setProvider] = useState<'gemini' | 'groq' | 'local'>(settings.aiProvider);
-  const [apiKey, setApiKey] = useState(settings.apiKey);
   const [githubToken, setGithubToken] = useState(settings.githubToken);
-  const [model, setModel] = useState(settings.model || 'gemini-2.0-flash');
-  const [showApiKey, setShowApiKey] = useState(false);
   const [showToken, setShowToken] = useState(false);
   const [savedNotice, setSavedNotice] = useState(false);
 
@@ -29,9 +26,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     e.preventDefault();
     onSave({
       aiProvider: provider,
-      apiKey: apiKey.trim(),
       githubToken: githubToken.trim(),
-      model: model.trim(),
     });
     setSavedNotice(true);
     setTimeout(() => {
@@ -71,7 +66,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 type="button"
                 onClick={() => {
                   setProvider('local');
-                  setModel('local-heuristic');
                 }}
                 className={`flex flex-col items-center justify-center p-3 rounded-xl border text-center transition ${
                   provider === 'local'
@@ -87,7 +81,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 type="button"
                 onClick={() => {
                   setProvider('gemini');
-                  setModel('gemini-2.0-flash');
                 }}
                 className={`flex flex-col items-center justify-center p-3 rounded-xl border text-center transition ${
                   provider === 'gemini'
@@ -96,14 +89,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 }`}
               >
                 <span className="text-xs font-bold">Google Gemini</span>
-                <span className="text-[10px] text-slate-500 mt-0.5">2.0 / 1.5 Flash</span>
+                <span className="text-[10px] text-slate-500 mt-0.5">Server-side API key</span>
               </button>
 
               <button
                 type="button"
                 onClick={() => {
                   setProvider('groq');
-                  setModel('llama-3.3-70b-versatile');
                 }}
                 className={`flex flex-col items-center justify-center p-3 rounded-xl border text-center transition ${
                   provider === 'groq'
@@ -117,37 +109,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </div>
           </div>
 
-          {/* API Key (if not local) */}
+          {/* Server-side AI credentials */}
           {provider !== 'local' && (
-            <div>
-              <div className="flex items-center justify-between mb-1.5">
-                <label className="block text-xs font-semibold text-slate-300">
-                  {provider === 'gemini' ? 'Google Gemini API Key' : 'Groq API Key'}
-                </label>
-                <span className="text-[11px] text-slate-500">Stored locally in browser</span>
-              </div>
-              <div className="relative">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-500">
-                  <Key className="w-3.5 h-3.5" />
-                </div>
-                <input
-                  type={showApiKey ? 'text' : 'password'}
-                  value={apiKey}
-                  onChange={(e) => setApiKey(e.target.value)}
-                  placeholder={provider === 'gemini' ? 'AIzaSy...' : 'gsk_...'}
-                  className="w-full pl-9 pr-10 py-2 bg-slate-900 border border-slate-700/80 rounded-xl text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowApiKey(!showApiKey)}
-                  className="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-500 hover:text-slate-300"
-                >
-                  {showApiKey ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
-                </button>
-              </div>
-              <p className="text-[11px] text-slate-500 mt-1">
-                If omitted, the backend will attempt reading `GEMINI_API_KEY` / `GROQ_API_KEY` from server environment.
-              </p>
+            <div className="p-3 rounded-xl bg-slate-900 border border-slate-700/80 text-[11px] text-slate-400 leading-relaxed">
+              Configure this provider on the backend with {provider === 'gemini' ? '`GEMINI_API_KEY` and optional `GEMINI_MODEL`' : '`GROQ_API_KEY` and optional `GROQ_MODEL`'}. Keys never enter browser storage or review requests.
             </div>
           )}
 

@@ -68,6 +68,8 @@ export interface ReviewSummary {
   duration_ms: number;
   static_analysis_found: number;
   ai_found: number;
+  ai_review_status: 'completed' | 'local' | 'failed';
+  ai_provider: 'gemini' | 'groq' | 'local';
 }
 
 export interface ReviewResponse {
@@ -91,8 +93,6 @@ export interface ReviewRequestPayload {
   pr_url?: string;
   github_token?: string;
   ai_provider?: string;
-  api_key?: string;
-  model?: string;
   sample_id?: string;
   custom_diff?: string;
   custom_title?: string;
